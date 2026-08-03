@@ -36,10 +36,10 @@ def extract_knowledge_from_chunk(text: str) -> ExtractionResult:
         Your task is to extract meaningful entities and the relationships between them from the provided text.
         Entities should be normalized (e.g., 'Open AI', 'openai' -> 'openai').
         
-        STRICT ONTOLOGY ENFORCEMENT:
-        You must ONLY use the following Entity Types: Disease, Treatment, Medicine, ClinicalTrial, Outcome, Symptom.
-        You must ONLY use the following Relationship Types: TREATED_BY, USES_MEDICINE, TESTED_IN, OUTCOME, HAS_SYMPTOM, COMORBID_WITH.
-        DO NOT invent new entity or relationship types (e.g., do not use HAS_RISK_FACTOR for comorbidities, do not use STUDIES_DISEASE for trials).
+        DYNAMIC ONTOLOGY EXTRACTION:
+        Dynamically discover and infer relevant Entity Types and Relationship Types based on the context of the text chunk.
+        - Use PascalCase for Entity Types (e.g., Disease, Player, Contract).
+        - Use UPPER_SNAKE_CASE for Relationship Types (e.g., HAS_RISK_FACTOR, PLAYS_FOR, SIGNED_BY).
         
         If no meaningful entities or relationships are found, return empty lists.
         """),
@@ -72,10 +72,10 @@ async def aextract_knowledge_from_chunk(text: str) -> ExtractionResult:
         Your task is to extract meaningful entities and the relationships between them from the provided text.
         Entities should be normalized (e.g., 'Open AI', 'openai' -> 'openai').
         
-        STRICT ONTOLOGY ENFORCEMENT:
-        You must ONLY use the following Entity Types: Disease, Treatment, Medicine, ClinicalTrial, Outcome, Symptom.
-        You must ONLY use the following Relationship Types: TREATED_BY, USES_MEDICINE, TESTED_IN, OUTCOME, HAS_SYMPTOM, COMORBID_WITH.
-        DO NOT invent new entity or relationship types (e.g., do not use HAS_RISK_FACTOR for comorbidities, do not use STUDIES_DISEASE for trials).
+        DYNAMIC ONTOLOGY EXTRACTION:
+        Dynamically discover and infer relevant Entity Types and Relationship Types based on the context of the text chunk.
+        - Use PascalCase for Entity Types (e.g., Disease, Player, Contract).
+        - Use UPPER_SNAKE_CASE for Relationship Types (e.g., HAS_RISK_FACTOR, PLAYS_FOR, SIGNED_BY).
         
         If no meaningful entities or relationships are found, return empty lists.
         """),

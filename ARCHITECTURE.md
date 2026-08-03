@@ -46,7 +46,7 @@ Still inside `process_document()`, the data is saved in two places:
 After the chunks are saved to the databases, the system extracts actual knowledge.
 
 1. **Sequential Linking**: The `ingestion` service adds a `[:NEXT_CHUNK]` relationship between sequential chunks to establish a clear reading order in Neo4j.
-2. **LLM Extraction (`services/extraction.py`)**: The text of each chunk is passed to an LLM via OpenRouter (using `langchain-openai`). We use structured outputs to force the LLM to return strict Pydantic objects (`EntityModel` and `RelationshipModel`).
+2. **LLM Extraction (`services/extraction.py`)**: The text of each chunk is passed to an LLM via OpenRouter (using `langchain-openai`). We instruct the LLM to dynamically discover and infer relevant Entity Types (PascalCase) and Relationship Types (UPPER_SNAKE_CASE) based on the text, supporting diverse domains (medical, legal, etc.). We use structured outputs to return `EntityModel` and `RelationshipModel` objects.
 3. **Graph Building (`services/graph_builder.py`)**: The extracted data is sent to Neo4j. We `MERGE` the entities to avoid duplicates, link the original `Chunk` to the `Entity` with `[:MENTIONS]`, and link the Entities to each other using the dynamically extracted relationships.
 
 ## Summary Diagram
@@ -89,8 +89,8 @@ When a user searches the knowledge base:
 1. **API Request**: The user sends a `GET` request to `/retrieval/search?query=...&mode=hybrid`.
 2. **Vector Search**: The query is passed to `FAISS` via `HuggingFaceEmbeddings` (BGE-M3) to retrieve the top `k` most semantically similar text chunks.
 3. **Graph Search**: 
-   - The query is matched against the `entity_name_index` (Fulltext index in Neo4j) to find relevant entities.
-   - For matching entities, the system retrieves their 1-hop relationships (neighboring entities and the relations connecting them).
+   - **Schema-Aware Generation**: The query is passed to LangChain's `GraphCypherQAChain`, which dynamically connects to Neo4j to fetch the current graph schema.
+   - **Targeted Traversal**: The LLM writes a precise Cypher query based on the user's natural language question and the exact relationships available in the database, seamlessly handling complex multi-hop queries involving multiple entities and relationships.
 4. **Context Assembly**: The results from both vector and graph searches are merged into a single structured string. This provides the LLM with both exact quotes (from chunks) and structural facts (from the graph).
 
 ```mermaid
@@ -108,7 +108,10 @@ sequenceDiagram
         Retrieval->>VectorStore: similarity_search(query)
         VectorStore-->>Retrieval: Relevant Chunks
     and Graph Search
-        Retrieval->>Neo4j: Fulltext query & 1-hop relations
+        Retrieval->>Neo4j: Fetch current DB schema
+        Retrieval->>LLM: Generate Cypher using Schema & Question
+        LLM-->>Retrieval: Executable Cypher Query
+        Retrieval->>Neo4j: Execute Generated Cypher
         Neo4j-->>Retrieval: Entities & Relationships
     end
     
