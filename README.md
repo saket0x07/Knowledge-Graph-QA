@@ -1,297 +1,347 @@
-# 🕸️ Hybrid GraphRAG & Knowledge Graph Q&A Engine
+# Knowledge-Graph-QA
 
-Welcome to the **Hybrid Knowledge Graph QA** project—an end-to-end, enterprise-grade **GraphRAG (Graph Retrieval-Augmented Generation)** platform. This system combines **Semantic Vector Search (FAISS)** with **Structured Relational Reasoning (Neo4j Graph Database)**, wrapped in a modern **FastAPI** backend and an intuitive **Streamlit** dashboard.
+Comprehensive, enterprise-grade hybrid Knowledge Graph Q&A engine combining semantic vector search (RAG) with a structured knowledge graph (GraphRAG). This repository implements a production-ready pipeline for ingesting documents (PDFs), extracting entities and relations with LLM assistance, storing facts in Neo4j, indexing textual chunks with FAISS, and answering natural language questions using a hybrid retrieval strategy.
 
-This README is designed to serve as both a **System Architecture Guide** and a **Comprehensive Revision Manual** covering advanced Knowledge Graph concepts, ontology ingestion paradigms, chunking strategies (TBox vs. ABox), and hybrid search dynamics.
-
----
-
-## 📚 Table of Contents
-1. [Theoretical Foundations & Core Concepts](#-theoretical-foundations--core-concepts)
-   - [Why Traditional Vector RAG Fails](#why-traditional-vector-rag-fails)
-   - [TBox vs. ABox in Knowledge Graphs](#tbox-vs-abox-in-knowledge-graphs)
-   - [The Orphan Axiom Problem](#the-orphan-axiom-problem)
-   - [The 3 Ingestion Techniques for GraphRAG](#the-3-ingestion-techniques-for-graphrag)
-   - [Dynamic Ontology Extraction](#dynamic-ontology-extraction)
-2. [System Architecture & Data Pipeline](#-system-architecture--data-pipeline)
-   - [Ingestion Workflow](#1-ingestion-workflow)
-   - [Hybrid Retrieval & Local vs. Global Search](#2-hybrid-retrieval--local-vs-global-search)
-   - [Generation & Explainability](#3-generation--explainability)
-3. [Technology Stack](#-technology-stack)
-4. [Project Structure](#-project-structure)
-5. [User Interface & Dashboard Overview](#-user-interface--dashboard-overview)
-6. [Quickstart & Installation](#-quickstart--installation)
-7. [Cypher & Neo4j Cheat Sheet for Revision](#-cypher--neo4j-cheat-sheet-for-revision)
+This README provides a detailed technical overview, architecture, deployment and development instructions, API reference and troubleshooting guidance to help maintainers and contributors understand, run, and extend the project.
 
 ---
 
-## 🧠 Theoretical Foundations & Core Concepts
-
-### Why Traditional Vector RAG Fails
-Standard Vector RAG embeds text passages into high-dimensional vector spaces and performs cosine similarity matching. While excellent for localized semantic similarity, it suffers from critical limitations:
-* **Loss of Global Context:** Vector search cannot easily summarize overarching themes across an entire corpus.
-* **Multi-Hop Reasoning Blindspot:** It cannot connect disparate entities across separate documents (e.g., *Document A: "Company X acquired Company Y"* and *Document B: "Company Y manufactures Component Z"* -> *Query: "What components does Company X now control?"*).
-* **Hallucination of Relationships:** Vector distances reflect semantic proximity, not factual assertion.
-
-**GraphRAG** addresses these flaws by organizing facts into explicit nodes and labeled edges, allowing exact multi-hop traversals and global reasoning.
-
----
-
-### TBox vs. ABox in Knowledge Graphs
-When modeling domain knowledge in Description Logics and Knowledge Graphs, knowledge is partitioned into two distinct components:
-
-| Component | Full Name | Definition | Example in our Project |
-| :--- | :--- | :--- | :--- |
-| **TBox** | *Terminology Box* | The **schema or ontology**. Defines the structural rules, entity classes, properties, and relationship types. | Entity Types: `[:Disease]`, `[:Treatment]`, `[:Symptom]`. Relationships: `[:TREATED_BY]`, `[:HAS_SYMPTOM]`. |
-| **ABox** | *Assertion Box* | The **instance data or facts**. Populates the TBox schema with concrete entities, document chunks, and real-world instances. | `(Diabetes:Entity {type: 'Disease'}) -[:TREATED_BY]-> (Insulin:Entity {type: 'Treatment'})` |
-
----
-
-### The Orphan Axiom Problem
-In traditional ontology-driven RAG systems, text chunking often creates **Orphan Axioms**—instance assertions (ABox facts) that become disconnected from their structural class hierarchy (TBox rules) or parent document context during splitting.
-
-#### How Our Hybrid Architecture Solves It:
-1. **Document & Chunk Anchoring:** Every extracted entity and relationship is connected back to a parent `Chunk` node, which in turn links to a `Document` node in Neo4j (`(Document)-[:HAS_CHUNK]->(Chunk)-[:MENTIONS]->(Entity)`).
-2. **Context-Enriched Chunking:** We combine semantic character splitting with vector embeddings containing full document metadata (`source`, `page_number`), ensuring no assertion is left without context.
+Table of Contents
+1. Project Overview
+2. Key Features
+3. Architecture & Data Flow
+4. Data Model & Ontology Concepts
+5. Technology Stack
+6. Project Layout
+7. Quickstart — Local Development
+8. Configuration & Environment Variables
+9. Running & Using the System
+10. API & UI Endpoints
+11. Ingestion Pipeline (Detailed)
+12. Retrieval & Answering Flow
+13. Examples
+14. Testing & CI
+15. Deployment & Scaling Notes
+16. Troubleshooting & FAQ
+17. Contributing
+18. License & Acknowledgements
 
 ---
 
-### The 3 Ingestion Techniques for GraphRAG
-Modern Knowledge Graph ingestion generally follows one of three paradigms:
+1. Project Overview
 
-1. **Entity Reader (Relational Thinking):** Extracts tabular/structured data into strict relational schemas. Highly precise, but rigid.
-2. **Graph Reader (NoSQL Thinking):** Extract raw triples `(Subject, Predicate, Object)` directly from unstructured text without predefined schemas. Extremely flexible, but can lead to entity duplication and sparse graphs.
-3. **Hybrid + Ontology (Graph Thinking) — *Implemented in this Project*:**
-   - **Step 1:** Extract structured entities and metadata from text chunks using an LLM.
-   - **Step 2:** Discover dynamic ontologies (relational facts and atomic assertions) on the fly.
-   - **Step 3:** Merge identical entities into a unified graph network while maintaining source provenance.
+Knowledge-Graph-QA is designed to remove the weaknesses of pure Vector-RAG by combining:
 
----
+- High‑recall semantic search over text chunks (FAISS embeddings).
+- Precise, explainable multi‑hop reasoning over a canonical knowledge graph (Neo4j).
+- LLM-driven extraction and answer synthesis with full source provenance and inference path reporting.
 
-### Dynamic Ontology Extraction
-Rather than requiring developers to write complex, static schema definitions beforehand, our ingestion pipeline uses LLM-powered dynamic extraction:
-* As a PDF is processed, the LLM reads chunks and dynamically identifies entity categories (`Disease`, `Treatment`, `Symptom`, `Concept`, etc.) and relationship types (`HAS_SYMPTOM`, `TREATED_BY`, `COMORBID_WITH`).
-* Identical entities extracted across different pages or documents are automatically merged into single nodes in Neo4j using `MERGE (e:Entity {name: ...})`.
+The result: accurate factual answers, multi-hop reasoning capability, and auditability for enterprise use.
 
----
 
-## 🏗️ System Architecture & Data Pipeline
+2. Key Features
 
-```
-                       ┌───────────────────────────────┐
-                       │       PDF Document Upload     │
-                       └───────────────┬───────────────┘
-                                       │
-                                       ▼
-                       ┌───────────────────────────────┐
-                       │  Recursive Character Splitter │
-                       │    (Chunk Size: 1000, 200)    │
-                       └───────────────┬───────────────┘
-                                       │
-                    ┌──────────────────┴──────────────────┐
-                    │                                     │
-                    ▼                                     ▼
-        ┌───────────────────────┐             ┌───────────────────────┐
-        │  FAISS Vector Index   │             │   LLM Entity & Triple │
-        │ (BAAI/bge-m3 Embeds)  │             │       Extraction      │
-        └───────────┬───────────┘             └───────────┬───────────┘
-                    │                                     │
-                    │                                     ▼
-                    │                         ┌───────────────────────┐
-                    │                         │     Neo4j Database    │
-                    │                         │ (Nodes & Relationships│
-                    │                         └───────────┬───────────┘
-                    │                                     │
-                    └──────────────────┬──────────────────┘
-                                       │
-                                       ▼
-                       ┌───────────────────────────────┐
-                       │     Hybrid Search Engine      │
-                       │  (Vector Filter + Cypher QA)  │
-                       └───────────────┬───────────────┘
-                                       │
-                                       ▼
-                       ┌───────────────────────────────┐
-                       │    LLM Answer Generation      │
-                       │  + Inference Path Display     │
-                       └───────────────┬───────────────┘
-```
+- Document ingestion (PDF) with chunking and metadata preservation.
+- LLM-powered entity and relation extraction with dynamic ontology discovery.
+- FAISS-based vector store for efficient semantic retrieval.
+- Neo4j knowledge graph with node/relationship merging and provenance tracking.
+- Hybrid search combining vector and graph retrieval for robust answers.
+- Explainability: returned Cypher inference path and source badges for every answer.
+- Streamlit UI for ingestion, graph visualization and chat-style Q&A.
+- Lightweight SQLite audit log for ingestion history and metadata.
 
-### 1. Ingestion Workflow
-1. **Document Loading:** PyPDFLoader reads the PDF and extracts raw text page-by-page.
-2. **Text Chunking:** `RecursiveCharacterTextSplitter` divides text into manageable chunks (`chunk_size=1000`, `chunk_overlap=200`).
-3. **Vector Storage:** Chunks are embedded using `BAAI/bge-m3` via `langchain_huggingface` and stored in a local FAISS vector store with source metadata.
-4. **Graph Store Load:** Each chunk is processed by the LLM (`OpenRouter / DeepSeek / GPT-4`) to extract nodes and edge triples, which are written into Neo4j using parameterized Cypher queries.
-5. **Audit Logging:** Ingestion metadata (file name, size, status, timestamp) is recorded in an **SQLite** database (`app.db`).
 
----
+3. Architecture & Data Flow
 
-### 2. Hybrid Retrieval & Local vs. Global Search
-When a user asks a question, our backend triggers `hybrid_search`:
+High-level pipeline (ASCII):
 
-#### A. Semantic Vector Search
-* Executes a cosine-similarity search against FAISS.
-* **Local Search Mode:** Applies a metadata filter `{"source": filename}` to restrict search to a specific PDF.
-* **Global Search Mode:** Searches across all vector chunks in the index.
+                       +---------------------+
+                       |  User / Dashboard   |
+                       +---------+-----------+
+                                 |
+                            HTTP | WebSocket
+                                 |
+                       +---------v-----------+
+                       |    FastAPI Backend  |
+                       +----+---------+------+
+                            |         |
+            +---------------+         +----------------+
+            |                                        |
+    +-------v------+                         +-------v------+
+    |   FAISS Vec   |                         |   Neo4j KG   |
+    |   (Chunks)    |                         | (Nodes/Edges) |
+    +---------------+                         +---------------+
+            ^                                          ^
+            |                                          |
+            +------------+     +-----------------------+
+                         |     |
+                  +------v-----v-------+
+                  |    Ingestion LLM    |
+                  | (Entity & Triple    |
+                  |   extraction)       |
+                  +---------------------+
 
-#### B. Knowledge Graph Search
-* Uses `GraphCypherQAChain` to inspect the Neo4j schema dynamically and synthesize a Cypher statement.
-* **Local Search Mode:** Injects a prompt rule forcing Cypher queries to match entities connected to the specified `filename` (`MATCH (d:Document {filename: ...})-[:HAS_CHUNK]->(c)-[:MENTIONS]->(e:Entity)...`).
-* **Global Search Mode:** Queries the entire graph network without document boundary constraints.
+Steps:
+1. Upload PDF → chunk → embed → store in FAISS with chunk metadata.
+2. Send chunk to LLM extractor → produce entities/triples and metadata.
+3. Merge triples into Neo4j using parameterized Cypher (MERGE for canonicalization).
+4. On query: run FAISS vector search to get relevant chunks and run graph Cypher queries for multi-hop evidence. Merge results and synthesize final LLM answer with sources and inference path.
 
----
 
-### 3. Generation & Explainability
-* **Context Assembly:** Vector passages and Cypher path strings are merged into a single deduplicated prompt context.
-* **Final Generation:** The LLM synthesizes a concise response strictly using the provided context.
-* **Explainability UI:** The frontend displays the generated **Inference Path (Cypher query)** and **Sources Found (Document badges)** for complete auditability.
+4. Data Model & Ontology Concepts
 
----
+This project follows common semantic-web/description-logics conventions. Two main layers are modeled:
 
-## 🛠️ Technology Stack
+- TBox (Terminology Box): ontology/schema — labels, relationship types, domain/range constraints.
+- ABox (Assertion Box): instance-level facts and document-level evidence.
 
-* **Backend API:** FastAPI, Uvicorn, Pydantic
-* **Frontend Dashboard:** Streamlit, Streamlit-Agraph (HTML5 Canvas physics visualization)
-* **Graph Database:** Neo4j (Community Edition / Desktop)
-* **Vector Database:** FAISS (Facebook AI Similarity Search)
-* **Relational Database:** SQLite (Ingestion Audit Trail)
-* **LLM Orchestration:** LangChain, `langchain-neo4j`, `langchain-huggingface`
-* **Embeddings Model:** `BAAI/bge-m3`
-* **LLM Provider:** OpenRouter API
+Important entities in the graph:
 
----
+- Document: root node for provenance (filename, upload time, pages).
+- Chunk: a contiguous piece of document text (text, offset, page, chunk_id).
+- Entity: canonical named entity (name, type(s), summary, canonical_id).
+- Relation: labeled edge between Entities (property like TREATED_BY, HAS_SYMPTOM).
 
-## 📁 Project Structure
+Best practices implemented:
+- Every assertion contains provenance linking back to the originating Chunk and Document.
+- Entities extracted across multiple chunks/documents are MERGEd to one canonical node using unique keys (e.g., normalized name + type).
 
-```
+
+5. Technology Stack
+
+- Python 3.10+
+- FastAPI (backend HTTP API)
+- Streamlit (frontend dashboard/UI)
+- Neo4j (graph database)
+- FAISS (vector index)
+- LangChain + langchain-neo4j integration
+- LLM connector(s): OpenRouter / provider of choice
+- Embeddings: BAAI/bge-m3 (or pluggable alternative)
+- SQLite (ingestion audit store)
+- Uvicorn (ASGI server)
+
+
+6. Project Layout
+
+(Top-level structure — updated to match codebase)
+
 Graph-QA/
-├── api/
-│   └── routes/
-│       ├── documents.py     # Upload & Ingestion history endpoints
-│       ├── graph.py         # Graph visualization payload endpoint
-│       ├── qa.py            # Hybrid Q&A endpoint
-│       └── retrieval.py     # Direct retrieval endpoint
-├── core/
-│   └── config.py            # App settings & environment variables
-├── db/
-│   ├── cypher_init.py       # Neo4j schema, indexes, & constraints
-│   ├── neo4j_client.py      # Neo4j driver connection manager
-│   └── sqlite_client.py     # SQLite history database manager
-├── models/
-│   └── schema.py            # Pydantic data models for extraction
-├── services/
-│   ├── extraction.py        # LLM initialization
-│   ├── generation.py        # Final answer synthesis service
-│   ├── graph_builder.py     # Cypher MERGE query builder
-│   ├── ingestion.py         # Async document processing pipeline
-│   ├── retrieval.py         # Hybrid search engine (FAISS + Cypher)
-│   └── vector_store.py      # FAISS vector store manager
-├── .streamlit/
-│   └── config.toml          # Streamlit visual theme configuration
-├── app.db                   # SQLite ingestion history database
-├── main.py                  # FastAPI application entrypoint
-├── ui.py                    # Streamlit 3-section dashboard UI
-└── requirements.txt         # Project Python dependencies
-```
+├── api/                    # FastAPI route modules (documents, graph, qa, retrieval)
+├── core/                   # Configuration and app-wide utilities
+├── db/                     # Neo4j and SQLite clients, schema initialization
+├── models/                 # Pydantic models and schemas
+├── services/               # Business logic: ingestion, extraction, graph-builder, retrieval
+├── .streamlit/             # Streamlit UI config
+├── app.db                  # SQLite ingestion audit DB (generated)
+├── main.py                 # FastAPI application entry point
+├── ui.py                   # Streamlit dashboard integration
+└── requirements.txt        # Python dependencies
 
----
 
-## 🎨 User Interface & Dashboard Overview
+7. Quickstart — Local Development
 
-The Streamlit UI (`ui.py`) features a sleek, multi-view sidebar navigation:
+Prerequisites
+- Python 3.10+
+- Neo4j (Desktop or Community Server) accessible via bolt://localhost:7687
+- Git
 
-1. **Data Ingestion Engine:**
-   - Drag-and-drop PDF uploader with real-time processing status polling.
-   - Right-hand **Ingestion History** panel backed by SQLite.
-2. **Knowledge Graph Visualizer:**
-   - Full-canvas interactive node graph built with physics-based layout engine (`streamlit-agraph`).
-   - Side panel showing **Node Details**, entity category badges, and **Connected Entities** (incoming/outgoing relationships).
-3. **GraphMind Explorer (Chat / Q&A):**
-   - **Persistent Knowledge Base Selector:** Switch between **Global (All Documents)** and specific PDFs in the sidebar.
-   - **Recent Queries & Saved Insights** sidebar panel.
-   - **Explainable Assistant Bubbles:** Displays response text, an **Inference Path (Cypher/SQL)** code box, and **Sources Found** pill tags.
+Clone and install
 
----
-
-## ⚡ Quickstart & Installation
-
-### 1. Prerequisites
-* Python 3.10+
-* Neo4j Desktop or Neo4j Community Server running locally on `bolt://localhost:7687`
-
-### 2. Environment Setup
-Clone the repository and set up a virtual environment:
 ```bash
 git clone https://github.com/saket0x07/Knowledge-Graph-QA.git
 cd Knowledge-Graph-QA
-
 python -m venv venv
-# On Windows:
-.\venv\Scripts\activate
-# On Linux/Mac:
+# macOS / Linux
 source venv/bin/activate
+# Windows (PowerShell)
+# .\venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
 ```
 
-### 3. Environment Variables
-Create a `.env` file in the root directory:
+Set up Neo4j
+- Start Neo4j and ensure credentials are set. Note the bolt URI and username/password.
+
+Create .env file
+
+Create a `.env` in the repository root with the following (example):
+
 ```env
 OPENROUTER_API_KEY=your_openrouter_api_key
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your_neo4j_password
+# Optional / advanced
+EMBEDDINGS_MODEL=BAAI/bge-m3
+VECTOR_STORE_PATH=./data/faiss_index
+SQLITE_PATH=./app.db
 ```
 
-### 4. Running the Application
+Run services locally
 
-Start the **FastAPI Backend**:
+1. Start FastAPI backend:
+
 ```bash
 python -m uvicorn main:app --reload
 ```
 
-In a second terminal, start the **Streamlit Dashboard**:
+2. Start Streamlit UI in a second terminal:
+
 ```bash
 streamlit run ui.py
 ```
 
-Open your browser to `http://localhost:8501`.
+Open the Streamlit UI at http://localhost:8501 and interact with ingestion, graph visualizer and Q&A.
+
+
+8. Configuration & Environment Variables
+
+- OPENROUTER_API_KEY — API key for LLM provider (required to call LLMs).
+- NEO4J_URI — bolt URI for Neo4j (default bolt://localhost:7687).
+- NEO4J_USER, NEO4J_PASSWORD — Neo4j authentication credentials.
+- EMBEDDINGS_MODEL — name/id of the embeddings model (default BAAI/bge-m3).
+- VECTOR_STORE_PATH — path to persist FAISS vector index.
+- SQLITE_PATH — path to SQLite DB for ingestion audits.
+
+Secrets should be stored in `.env` or injected into the environment via your chosen secret management.
+
+
+9. Running & Using the System
+
+Typical workflow:
+1. Upload a PDF via the Streamlit UI or POST to the /documents endpoint.
+2. The ingestion pipeline chunks the PDF, stores text embeddings in FAISS, and runs the extractor LLM to populate Neo4j.
+3. Query the system from the GraphMind UI (chat) or call the /qa endpoint with a question and an optional `filename` scope.
+4. The system returns an answer with: text response, list of source chunks/documents, and the Cypher inference path used.
+
+
+10. API & UI Endpoints
+
+(Assumes routes implemented under api/ directory; adjust if file names differ)
+
+- POST /documents/upload — upload PDF and trigger asynchronous ingestion
+- GET /documents/history — list ingestion history (from SQLite)
+- GET /graph/visualize?filename=<file> — returns graph payload for visualization
+- POST /qa — main hybrid QA endpoint; body: { question: string, filename?: string }
+- POST /retrieval — direct retrieval endpoint returning top N FAISS chunks
+
+Example cURL (QA)
+
+```bash
+curl -X POST http://localhost:8000/qa \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What treatments are recommended for diabetes?", "filename": "diabetes_paper.pdf"}'
+```
+
+Response (example)
+```
+{
+  "answer": "...",
+  "sources": ["diabetes_paper.pdf:chunk-12", "diabetes_review.pdf:chunk-3"],
+  "inference_path": "MATCH (d:Document {filename: '...'})-[:HAS_CHUNK]->(c)-[:MENTIONS]->(e) ..."
+}
+```
+
+
+11. Ingestion Pipeline (Detailed)
+
+1. PDF Loading & Chunking
+   - PyPDFLoader extracts text by page.
+   - RecursiveCharacterTextSplitter (chunk_size=1000, chunk_overlap=200) produces chunks with metadata (page, offset).
+
+2. Embeddings & Vector Storage
+   - Each chunk is embedded using the configured embeddings model and upserted into FAISS along with metadata (document filename, chunk_id, page).
+
+3. LLM Extraction to Graph
+   - Each chunk is sent to an LLM extraction chain which returns:
+     - Entities with type(s) and normalized name
+     - Triples (subject, predicate, object) with confidence and evidence pointers (offsets)
+   - Graph builder creates parameterized Cypher MERGE queries to insert/merge nodes and relationships while attaching provenance (Chunk, Document).
+
+4. Audit Log
+   - The ingestion event and metadata are written to SQLite (`app.db`) for auditing and to power the ingestion history UI.
+
+Important notes
+- The extraction LLM should be run with temperature=0 (deterministic) for canonical triples when possible.
+- Deduplication and merge rules live in the graph_builder service.
+
+
+12. Retrieval & Answering Flow
+
+On a user query the system performs the following steps:
+
+A. Vector Retrieval
+- Use FAISS to get top-K chunks by cosine similarity. Optionally filter by filename for local search.
+
+B. Graph Cypher Search
+- Use a GraphCypherQAChain which inspects the graph and constructs Cypher queries to find multi-hop evidence.
+- In local mode, constrain Cypher queries to chunks linked to the selected document.
+
+C. Context Assembly
+- Combine unique graph results and vector chunks into a deduplicated context fed to the final LLM for answer generation.
+
+D. Answer Generation
+- LLM synthesizes a concise answer and returns the inference path (Cypher) and sources for auditability.
+
+
+13. Examples
+
+Example: Local scoped question (Streamlit UI)
+- Select document "diabetes_paper.pdf" → Ask: "Which treatments reduce A1C for type 2 diabetes?"
+- The system returns: summarized treatments, citations to document chunk IDs, and a Cypher inference path showing relationships between treatments and outcome measures.
+
+
+14. Testing & CI
+
+- Unit tests: add tests under tests/ for services (ingestion, vector_store, graph_builder).
+- Integration tests: create test fixtures that spin up a test Neo4j instance (or use Neo4j test harness) and a temporary FAISS index.
+- CI: ensure environment variables are injected in the pipeline and secrets are masked.
+
+
+15. Deployment & Scaling Notes
+
+- Neo4j: for production consider Neo4j Aura or clustered Neo4j Enterprise for scale and HA.
+- Vector Index: FAISS is file-backed and suitable for single-machine usage. For distributed/managed solutions consider Milvus, Pinecone, or OpenSearch k-NN.
+- LLMs: use provider quotas and batching. Use async processing and rate-limiting for ingestion and querying.
+- Storage: persist FAISS index periodically and back up Neo4j regularly.
+
+
+16. Troubleshooting & FAQ
+
+Q: Neo4j connection fails (Authentication error)
+A: Confirm NEO4J_URI, NEO4J_USER and NEO4J_PASSWORD in `.env`. Start Neo4j Desktop or service and verify bolt port.
+
+Q: Streamlit UI does not load
+A: Ensure `streamlit run ui.py` is running and check console logs for missing dependencies. Confirm backend is up (main:app).
+
+Q: Embeddings or LLM calls fail
+A: Verify OPENROUTER_API_KEY is present and valid. Check provider status and rate limits.
+
+
+17. Contributing
+
+Thank you for your interest in contributing! Typical contribution areas:
+- Bug fixes and improvements to the ingestion/extraction pipeline.
+- New extractor prompt templates, type resolvers or merge strategies.
+- UI enhancements and graph visualization features.
+- Tests and CI improvements.
+
+Guidelines:
+- Fork the repo, create a feature branch, open a PR with a descriptive title and detailed description of changes.
+- Write tests for new features and ensure existing tests pass.
+- Follow repo code style (black/flake8 if configured).
+
+
+18. License & Acknowledgements
+
+- Replace or add a LICENSE file in the repository root as appropriate for your project (MIT, Apache-2.0, etc.).
+- Acknowledge 3rd-party libraries and projects used (LangChain, Neo4j, FAISS, Streamlit).
 
 ---
 
-## 📝 Cypher & Neo4j Cheat Sheet for Revision
+If you'd like, I can also:
+- Add a short example notebook that demonstrates ingestion and a sample Q&A flow.
+- Create a Docker Compose file to spin up Neo4j, the FastAPI backend and a worker for ingestion.
+- Add unit/integration test templates and CI config for GitHub Actions.
 
-Use these Cypher snippets to inspect and debug your Knowledge Graph in Neo4j Browser:
-
-### 1. View Schema Constraints & Indexes
-```cypher
-SHOW CONSTRAINTS;
-```
-
-### 2. Count Total Nodes by Label
-```cypher
-MATCH (n) 
-RETURN labels(n) AS Label, count(*) AS Count;
-```
-
-### 3. Fetch All Entities and Relationships for a Specific Document
-```cypher
-MATCH (d:Document {filename: "ai_rag_notes.pdf"})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e1:Entity)-[r]->(e2:Entity)
-RETURN d, c, e1, r, e2 
-LIMIT 50;
-```
-
-### 4. Find Multi-Hop Paths Between Two Entities
-```cypher
-MATCH path = shortestPath((e1:Entity {name: "Diabetes"})-[*..3]-(e2:Entity {name: "Hypertension"}))
-RETURN path;
-```
-
-### 5. Wipe Graph Database (For Testing Reset)
-```cypher
-MATCH (n) DETACH DELETE n;
-```
-
----
-
-*Built with ❤️ for Advanced Knowledge Graph RAG Architectures.*
+If that sounds good, I will commit the changes now.
