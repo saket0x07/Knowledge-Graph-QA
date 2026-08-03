@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from langchain_neo4j import Neo4jGraph, GraphCypherQAChain
 from langchain_core.prompts import PromptTemplate
 from services.vector_store import get_vector_store
@@ -6,14 +6,18 @@ from db.neo4j_client import get_neo4j_client
 from core.config import settings
 from services.extraction import get_llm
 
-def vector_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def vector_search(query: str, top_k: int = 5, filename: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieve semantically similar chunks using FAISS with deduplication."""
     vsm = get_vector_store()
     if not vsm.vector_store:
         print("Warning: Vector store not initialized. Cannot perform vector search.")
         return []
         
-    results = vsm.vector_store.similarity_search_with_score(query, k=top_k)
+    search_kwargs = {"k": top_k}
+    if filename and filename != "Global (All Documents)":
+        search_kwargs["filter"] = {"source": filename}
+        
+    results = vsm.vector_store.similarity_search_with_score(query, **search_kwargs)
     
     formatted_results = []
     seen_texts = set()
@@ -28,13 +32,13 @@ def vector_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
             })
     return formatted_results
 
-def graph_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def graph_search(query: str, top_k: int = 5, filename: Optional[str] = None) -> Dict[str, Any]:
     """Retrieve relevant entities and their relationships using schema-aware GraphCypherQAChain."""
     try:
         llm = get_llm()
     except Exception as e:
         print(f"Skipping graph search: {e}")
-        return []
+        return {"results": [], "cypher_query": ""}
 
     # Connect to Neo4j graph for LangChain to fetch the exact schema dynamically
     try:
@@ -64,26 +68,30 @@ def graph_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         )
     except Exception as e:
         print(f"Could not connect Neo4jGraph for CypherQAChain: {e}")
-        return []
+        return {"results": [], "cypher_query": ""}
 
-    CYPHER_GENERATION_TEMPLATE = """Task:Generate Cypher statement to query a graph database.
+    filename_rule = ""
+    if filename and filename != "Global (All Documents)":
+        filename_rule = f"\n6. CRITICAL: You MUST ONLY match entities that are connected to a chunk from the document '{filename}'. Example: MATCH (d:Document {{filename: '{filename}'}})-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(a:Entity)..."
+
+    CYPHER_GENERATION_TEMPLATE = f"""Task:Generate Cypher statement to query a graph database.
 Instructions:
 You MUST follow these CRITICAL rules. If you do not, the query will fail.
 1. ALWAYS use the `Entity` label for ALL nodes. NEVER use specific node labels like `:Disease`, `:Medicine`, `:RiskFactor`.
 2. NEVER invent relationship types. You MUST ONLY use the EXACT relationship types provided in the schema. (e.g., use `[:COMORBID_WITH]` instead of `[:HAS_COMORBIDITY]`, and `[:TREATED_BY]` instead of `[:HAS_TREATMENT]`).
 3. Filter the category of an entity using the `type` property. (e.g. `MATCH (a:Entity {{type: 'Disease'}})-...`)
 4. ALWAYS use `toLower()` for case-insensitive matching on names to avoid missing data. (e.g. `MATCH (a:Entity) WHERE toLower(a.name) CONTAINS toLower('Obesity')`)
-5. Example correct query: `MATCH (a:Entity {{type: 'Disease'}})-[:HAS_RISK_FACTOR]->(b:Entity) WHERE toLower(b.name) CONTAINS toLower('Obesity') RETURN a`
+5. Example correct query: `MATCH (a:Entity {{type: 'Disease'}})-[:HAS_RISK_FACTOR]->(b:Entity) WHERE toLower(b.name) CONTAINS toLower('Obesity') RETURN a`{filename_rule}
 
 Schema:
-{schema}
+{{schema}}
 Note: Do not include any explanations or apologies in your responses.
 Do not respond to any questions that might ask anything else than for you to construct a Cypher statement.
 Do not include any text except the generated Cypher statement.
 Try to return the full paths (nodes and relationships) if possible, or just the relevant connected nodes.
 
 The question is:
-{question}"""
+{{question}}"""
     
     CYPHER_GENERATION_PROMPT = PromptTemplate(
         input_variables=["schema", "question"], template=CYPHER_GENERATION_TEMPLATE
@@ -101,6 +109,9 @@ The question is:
             validate_cypher=False,
             top_k=top_k * 2
         )
+        # Get the actual generated Cypher query to pass back to the UI
+        cypher_res = chain.cypher_generation_chain.invoke({"question": query, "schema": graph.schema})
+        cypher_query = cypher_res.content if hasattr(cypher_res, 'content') else str(cypher_res)
         
         result = chain.invoke({"query": query})
         results_data = result.get("result", [])
@@ -118,19 +129,27 @@ The question is:
                 "score": 1.0
             })
             
-        return formatted_results
+        return {"results": formatted_results, "cypher_query": cypher_query}
     except Exception as e:
         print(f"Error during graph search Cypher generation: {e}")
-        return []
+        return {"results": [], "cypher_query": ""}
 
-def hybrid_search(query: str, top_k: int = 5) -> Dict[str, Any]:
+def hybrid_search(query: str, top_k: int = 5, filename: Optional[str] = None) -> Dict[str, Any]:
     """Perform both vector and graph searches and combine results."""
-    vector_results = vector_search(query, top_k=top_k)
-    graph_results = graph_search(query, top_k=top_k)
+    vector_results = vector_search(query, top_k=top_k, filename=filename)
+    graph_out = graph_search(query, top_k=top_k, filename=filename)
+    
+    graph_results = graph_out.get("results", [])
+    cypher_query = graph_out.get("cypher_query", "")
+    
+    # Extract unique sources from vector results
+    sources = list(set([res["metadata"].get("source", "Unknown") for res in vector_results]))
     
     return {
         "vector_results": vector_results,
-        "graph_results": graph_results
+        "graph_results": graph_results,
+        "cypher_query": cypher_query,
+        "sources": sources
     }
 
 def assemble_context(hybrid_results: Dict[str, Any]) -> str:

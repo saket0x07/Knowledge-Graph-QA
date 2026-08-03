@@ -119,3 +119,32 @@ sequenceDiagram
     Retrieval-->>API: { results, assembled_context }
     API-->>User: JSON Response
 ```
+
+## 7. The Generation Flow (Phase 5)
+
+The final step in the Hybrid RAG pipeline is generating a natural language answer from the retrieved context.
+
+1. **API Request**: The user sends a `POST` request to `/qa/ask` with a JSON body `{"query": "..."}`.
+2. **Context Retrieval**: The endpoint calls `hybrid_search(query)` to retrieve both vector and graph contexts, and then merges them using `assemble_context()`.
+3. **LLM Synthesis (`services/generation.py`)**: The `generate_answer()` function wraps the user's question and the assembled context in a strict `SystemMessage`. This prompt commands the LLM to use *only* the provided text and graph facts to answer the question, and to explicitly state when it doesn't have enough information.
+4. **Response**: The final, synthesized natural language answer is returned to the user alongside the exact context that was used to generate it.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant API (FastAPI)
+    participant Retrieval (Service)
+    participant Generation (Service)
+    participant LLM (OpenRouter)
+
+    User->>API: POST /qa/ask {query}
+    API->>Retrieval: hybrid_search(query)
+    Retrieval-->>API: context_str
+    
+    API->>Generation: generate_answer(query, context_str)
+    Generation->>LLM: ChatPromptTemplate (Context + Question)
+    LLM-->>Generation: Synthesized Answer
+    Generation-->>API: answer
+    
+    API-->>User: JSON { answer, context_used }
+```

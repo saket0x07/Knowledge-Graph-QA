@@ -1,0 +1,15 @@
+[theme]
+# The primary accent color for interactive elements (e.g., buttons, active tabs)
+primaryColor = "#0047AB"
+
+# Background color for the main content area
+backgroundColor = "#F8F9FA"
+
+# Background color for the sidebar and most widgets
+secondaryBackgroundColor = "#FFFFFF"
+
+# Color used for text
+textColor = "#1E293B"
+
+# Font family
+font = "sans serif"

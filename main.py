@@ -2,10 +2,15 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from db.neo4j_client import get_neo4j_client
 from db.cypher_init import init_db_schema
-from api.routes import documents, retrieval
+from db.sqlite_client import init_sqlite_db
+from api.routes import documents, retrieval, qa, graph
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: Initialize SQLite
+    init_sqlite_db()
+    print("Initialized SQLite DB for ingestion history.")
+    
     # Startup: Verify Neo4j connection
     client = get_neo4j_client()
     if client.verify_connectivity():
@@ -28,10 +33,8 @@ app = FastAPI(
 
 app.include_router(documents.router)
 app.include_router(retrieval.router)
-
-@app.get("/")
-async def root():
-    return {"message": "Welcome to KnowledgeGraph-RAG API"}
+app.include_router(qa.router)
+app.include_router(graph.router)
 
 if __name__ == "__main__":
     import uvicorn
