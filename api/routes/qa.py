@@ -15,13 +15,10 @@ class AskRequest(BaseModel):
 @router.post("/ask", summary="Ask a question and get an LLM-generated answer based on the knowledge graph", response_model=Dict[str, Any])
 async def ask_question(request: AskRequest):
     try:
-        # Step 1: Retrieve relevant context (hybrid search)
         results = hybrid_search(request.query, request.top_k, request.filename)
         
-        # Step 2: Assemble the context into a string
         context_str = assemble_context(results)
         
-        # Step 3: Pass context and query to the LLM for final answer generation
         answer = generate_answer(request.query, context_str)
         
         return {

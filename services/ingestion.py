@@ -78,25 +78,25 @@ async def process_chunks_async(chunk_models):
 
 def process_document(file_path: str):
     """
-    Main orchestration function for Phase 2: Ingestion and Phase 3: Graph Building.
+    Main orchestration function for Ingestion and Graph Building.
     """
     filename = os.path.basename(file_path)
     processing_status[filename] = "processing"
     try:
-        # 1. Parsing
+   
         if not file_path.lower().endswith(".pdf"):
             raise ValueError("Only PDF is supported currently")
             
         pages = parse_pdf(file_path)
         
-        # 2. Setup Splitter
+      
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
             length_function=len,
         )
         
-        # 3. Create Document Model
+
         doc_id = str(uuid.uuid4())
         document = DocumentModel(id=doc_id, filename=filename)
         
@@ -117,15 +117,14 @@ def process_document(file_path: str):
                 )
                 chunk_models.append(chunk)
                 
-        # 5. Save Graph Structure to Neo4j
+
         if chunk_models:
             save_to_neo4j(document, chunk_models)
             
-            # 6. Save Vector Embeddings to FAISS
             vector_store = get_vector_store()
             vector_store.add_chunks(chunk_models)
             
-            # 7. Knowledge Graph Extraction (Phase 3)
+
             asyncio.run(process_chunks_async(chunk_models))
             
         print(f"Successfully finished processing document: {file_path}")
